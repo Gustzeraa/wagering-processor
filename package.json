@@ -21,6 +21,7 @@
     "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1156.0",
     "@mikro-orm/core": "^7.2.5",
     "@mikro-orm/migrations": "^7.2.5",
     "@mikro-orm/nestjs": "^7.1.0",
