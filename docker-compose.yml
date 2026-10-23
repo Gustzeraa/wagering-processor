@@ -15,5 +15,19 @@ services:
       timeout: 3s
       retries: 10
 
+  localstack:
+    image: localstack/localstack:4.0
+    environment:
+      SERVICES: sqs,sns
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./infra/localstack:/etc/localstack/init/ready.d
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
 volumes:
   pgdata:
