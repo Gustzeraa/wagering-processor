@@ -14,7 +14,9 @@
     "test": "bun test",
     "test:unit": "bun test test/unit",
     "test:integration": "bun test test/integration",
-    "test:concurrency": "bun test test/concurrency"
+    "test:concurrency": "bun test test/concurrency",
+    "migration:up": "bun src/migrate.ts up",
+    "migration:down": "bun src/migrate.ts down"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1156.0",
