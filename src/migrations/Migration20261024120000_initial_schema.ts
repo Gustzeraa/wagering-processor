@@ -78,8 +78,8 @@ export class Migration20261024120000_initial_schema extends Migration {
         CONSTRAINT uq_tx_idempotency_key UNIQUE (idempotency_key),
         CONSTRAINT uq_tx_provider_external UNIQUE (provider_id, external_transaction_id),
 
-        CONSTRAINT fk_tx_wallet FOREIGN KEY (wallet_id, currency)
-          REFERENCES wallet (id, currency) DEFERRABLE INITIALLY DEFERRED,
+        CONSTRAINT fk_tx_wallet FOREIGN KEY (wallet_id)
+          REFERENCES wallet (id) DEFERRABLE INITIALLY DEFERRED,
         CONSTRAINT fk_tx_reference FOREIGN KEY (reference_transaction_id)
           REFERENCES wager_transaction (id) DEFERRABLE INITIALLY DEFERRED,
 
