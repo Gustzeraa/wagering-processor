@@ -17,6 +17,8 @@ import {
   transactionToRecord,
   walletToRecord,
 } from './mappers';
+import { OutboxMessageRecord } from './records';
+import type { IntegrationEvent } from '../../domain/events';
 
 export class WalletRepository {
   /** SELECT ... FOR UPDATE: trava a wallet até o fim da transação. */
@@ -88,5 +90,22 @@ export class LedgerRepository {
   async listByWallet(tx: EntityManager, walletId: string): Promise<WalletLedgerEntry[]> {
     const rows = await tx.find(LedgerEntryRecord, { walletId }, { orderBy: { walletVersion: 'asc' } });
     return rows.map(toLedgerEntry);
+  }
+}
+
+export class OutboxRepository {
+  add(tx: EntityManager, event: IntegrationEvent<unknown>): void {
+    tx.persist(
+      Object.assign(new OutboxMessageRecord(), {
+        id: event.eventId,
+        aggregateId: event.aggregateId,
+        eventType: event.eventType,
+        payload: event.toJSON() as unknown as Record<string, unknown>,
+        occurredAt: event.occurredAt,
+        attempts: 0,
+        nextAttemptAt: null,
+        publishedAt: null,
+      }),
+    );
   }
 }

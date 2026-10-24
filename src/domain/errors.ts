@@ -42,3 +42,23 @@ export class InvalidTransactionStateError extends Error {
     this.name = 'InvalidTransactionStateError';
   }
 }
+
+export class WalletNotFoundError extends DomainError {
+  readonly code = 'WALLET_NOT_FOUND';
+
+  constructor(walletId: string) {
+    super(`Wallet ${walletId} not found`);
+  }
+}
+
+export class WalletAlreadyExistsError extends DomainError {
+  readonly code = 'WALLET_ALREADY_EXISTS';
+}
+
+export class IdempotencyConflictError extends DomainError {
+  readonly code = 'IDEMPOTENCY_CONFLICT';
+
+  constructor(key: string) {
+    super(`Idempotency key ${key} was already used with a different payload`);
+  }
+}
