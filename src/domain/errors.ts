@@ -18,3 +18,15 @@ export class CurrencyMismatchError extends DomainError {
     super(`Currency mismatch: expected ${expected}, received ${received}`);
   }
 }
+
+export class InsufficientFundsError extends DomainError {
+  readonly code = 'INSUFFICIENT_FUNDS';
+
+  constructor(walletId: string) {
+    super(`Insufficient funds in wallet ${walletId}`);
+  }
+}
+
+export class InvalidLedgerEntryError extends DomainError {
+  readonly code = 'INVALID_LEDGER_ENTRY';
+}
