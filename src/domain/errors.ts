@@ -30,3 +30,15 @@ export class InsufficientFundsError extends DomainError {
 export class InvalidLedgerEntryError extends DomainError {
   readonly code = 'INVALID_LEDGER_ENTRY';
 }
+
+export class InvalidWagerTransactionError extends DomainError {
+  readonly code = 'INVALID_PAYLOAD';
+}
+
+/** Erro de programação: transição de estado proibida. Não é regra de negócio. */
+export class InvalidTransactionStateError extends Error {
+  constructor(transactionId: string, from: string, to: string) {
+    super(`Transaction ${transactionId} cannot go from ${from} to ${to}`);
+    this.name = 'InvalidTransactionStateError';
+  }
+}
