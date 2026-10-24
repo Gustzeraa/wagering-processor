@@ -91,6 +91,23 @@ export class LedgerRepository {
     const rows = await tx.find(LedgerEntryRecord, { walletId }, { orderBy: { walletVersion: 'asc' } });
     return rows.map(toLedgerEntry);
   }
+
+    /** Página do mais recente para o mais antigo; pede limit + 1 para saber se há próxima. */
+  async page(
+    em: EntityManager,
+    walletId: string,
+    beforeVersion: number | undefined,
+    limit: number,
+  ): Promise<WalletLedgerEntry[]> {
+    const where = beforeVersion !== undefined
+      ? { walletId, walletVersion: { $lt: beforeVersion } }
+      : { walletId };
+    const rows = await em.find(LedgerEntryRecord, where, {
+      orderBy: { walletVersion: 'desc' },
+      limit: limit + 1,
+    });
+    return rows.map(toLedgerEntry);
+  }
 }
 
 export class OutboxRepository {
