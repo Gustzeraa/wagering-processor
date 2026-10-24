@@ -3,6 +3,7 @@ import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { EntityManager } from '@mikro-orm/postgresql';
 import config from './mikro-orm.config';
 import {
+  InboxRepository,
   LedgerRepository,
   OutboxRepository,
   WagerTransactionRepository,
@@ -18,6 +19,7 @@ import { WalletsController } from './http/wallets.controller';
 import { WageringController } from './http/wagering.controller';
 import { HealthController } from './http/health.controller';
 import { AuthGuard } from './http/auth.guard';
+import { WagerTransactionConsumer } from './messaging/wager-transaction.consumer';
 
 const REPOSITORIES = [WalletRepository, WagerTransactionRepository, LedgerRepository, OutboxRepository];
 
@@ -26,6 +28,8 @@ const REPOSITORIES = [WalletRepository, WagerTransactionRepository, LedgerReposi
   controllers: [WalletsController, WageringController, HealthController],
   providers: [
     ...REPOSITORIES,
+    InboxRepository,
+    WagerTransactionConsumer,
     AuthGuard,
     { provide: SQS_CLIENT, useFactory: createSqsClient },
     {

@@ -19,6 +19,7 @@ import {
 } from './mappers';
 import { OutboxMessageRecord } from './records';
 import type { IntegrationEvent } from '../../domain/events';
+import type { InboxMessage } from '../../domain/inbox-message';
 
 export class WalletRepository {
   /** SELECT ... FOR UPDATE: trava a wallet até o fim da transação. */
@@ -123,6 +124,35 @@ export class OutboxRepository {
         nextAttemptAt: null,
         publishedAt: null,
       }),
+    );
+  }
+}
+
+export type InboxReceipt = 'new' | 'duplicate' | 'conflict';
+
+export class InboxRepository {
+  /** INSERT ... ON CONFLICT: a constraint decide, nunca "consultar e depois inserir". */
+  async tryReceive(tx: EntityManager, message: InboxMessage): Promise<InboxReceipt> {
+    const inserted = await tx.execute(
+      `INSERT INTO inbox_message (consumer_name, message_id, payload_hash, received_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT DO NOTHING
+       RETURNING message_id`,
+      [message.consumerName, message.messageId, message.payloadHash, message.receivedAt],
+    );
+    if (inserted.length > 0) return 'new';
+
+    const [existing] = await tx.execute(
+      `SELECT payload_hash FROM inbox_message WHERE consumer_name = ? AND message_id = ?`,
+      [message.consumerName, message.messageId],
+    );
+    return existing?.payload_hash === message.payloadHash ? 'duplicate' : 'conflict';
+  }
+
+  async markProcessed(tx: EntityManager, message: InboxMessage): Promise<void> {
+    await tx.execute(
+      `UPDATE inbox_message SET processed_at = ? WHERE consumer_name = ? AND message_id = ?`,
+      [message.processedAt, message.consumerName, message.messageId],
     );
   }
 }

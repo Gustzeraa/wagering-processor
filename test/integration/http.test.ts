@@ -8,6 +8,7 @@ let app: INestApplication;
 let baseUrl: string;
 
 beforeAll(async () => {
+    process.env.WORKERS_ENABLED = 'false';
   app = await NestFactory.create(AppModule, { logger: false });
   app.useGlobalFilters(new ApiExceptionFilter());
   await app.listen(0); // porta livre qualquer
