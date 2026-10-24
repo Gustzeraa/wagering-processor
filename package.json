@@ -21,6 +21,7 @@
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1156.0",
     "@mikro-orm/core": "^7.2.5",
+    "@mikro-orm/decorators": "^7.2.5",
     "@mikro-orm/migrations": "^7.2.5",
     "@mikro-orm/nestjs": "^7.1.0",
     "@mikro-orm/postgresql": "^7.2.5",
