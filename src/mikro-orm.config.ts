@@ -10,6 +10,6 @@ export default defineConfig({
   entities: [],
   discovery: { warnWhenNoEntities: false },
   extensions: [Migrator],
-  migrations: { path: 'src/migrations' },
+  migrations: { path: 'src/migrations', snapshot: false },
   debug: true,
 });
