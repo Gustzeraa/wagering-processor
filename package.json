@@ -19,6 +19,7 @@
     "migration:down": "bun src/migrate.ts down"
   },
   "dependencies": {
+    "@aws-sdk/client-sns": "^3.1156.0",
     "@aws-sdk/client-sqs": "^3.1156.0",
     "@mikro-orm/core": "^7.2.5",
     "@mikro-orm/decorators": "^7.2.5",

@@ -20,6 +20,7 @@ import {
 import { OutboxMessageRecord } from './records';
 import type { IntegrationEvent } from '../../domain/events';
 import type { InboxMessage } from '../../domain/inbox-message';
+import { OutboxMessage } from '../../domain/outbox-message';
 
 export class WalletRepository {
   /** SELECT ... FOR UPDATE: trava a wallet até o fim da transação. */
@@ -113,14 +114,15 @@ export class LedgerRepository {
 
 export class OutboxRepository {
   add(tx: EntityManager, event: IntegrationEvent<unknown>): void {
+    const message = OutboxMessage.enqueue(event);
     tx.persist(
       Object.assign(new OutboxMessageRecord(), {
-        id: event.eventId,
-        aggregateId: event.aggregateId,
-        eventType: event.eventType,
-        payload: event.toJSON() as unknown as Record<string, unknown>,
-        occurredAt: event.occurredAt,
-        attempts: 0,
+        id: message.id,
+        aggregateId: message.aggregateId,
+        eventType: message.eventType,
+        payload: message.payload as Record<string, unknown>,
+        occurredAt: message.occurredAt,
+        attempts: message.attempts,
         nextAttemptAt: null,
         publishedAt: null,
       }),
@@ -156,3 +158,4 @@ export class InboxRepository {
     );
   }
 }
+

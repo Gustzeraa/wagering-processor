@@ -5,6 +5,7 @@
     "": {
       "name": "wagering-processor",
       "dependencies": {
+        "@aws-sdk/client-sns": "^3.1156.0",
         "@aws-sdk/client-sqs": "^3.1156.0",
         "@mikro-orm/core": "^7.2.5",
         "@mikro-orm/decorators": "^7.2.5",
@@ -46,6 +47,8 @@
     "@angular-devkit/schematics": ["@angular-devkit/schematics@22.2.3", "", { "dependencies": { "@angular-devkit/core": "22.2.3", "jsonc-parser": "3.3.1", "magic-string": "1.4.1", "ora": "9.4.1", "rxjs": "7.8.2" } }, "sha512-+XfBViIGqiFQK8KJXA6PgANX9tLuMO/x8GFjlzEmA4LIe9ikAtpGZw+Ezo547BIJQoJBIKCJYR0knE4BmbFeSQ=="],
 
     "@angular-devkit/schematics-cli": ["@angular-devkit/schematics-cli@22.2.3", "", { "dependencies": { "@angular-devkit/core": "22.2.3", "@angular-devkit/schematics": "22.2.3", "@inquirer/prompts": "8.7.2" }, "bin": { "schematics": "bin/schematics.js" } }, "sha512-GebRkurUplPBwJOz/LT40ZZ0Hxv0EzpllJD1Oj7Bjkk/9A8PKGPDSRgEGfWcVk2h35V4JNNC0g6pSMj9s0dWxg=="],
+
+    "@aws-sdk/client-sns": ["@aws-sdk/client-sns@3.1156.0", "", { "dependencies": { "@aws-sdk/core": "^3.978.5", "@aws-sdk/credential-provider-node": "^3.972.88", "@aws-sdk/types": "^3.975.0", "@smithy/core": "^3.36.1", "@smithy/fetch-http-handler": "^5.8.0", "@smithy/node-http-handler": "^4.12.1", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-WiAW6FzBNJyGMnBe2FopquQOVdDqfnnCfbdyf26Vs0MW8dMZkgX4SeqZkcP0vEw+K1tW8Tf8yH9uVrMoRdIi+A=="],
 
     "@aws-sdk/client-sqs": ["@aws-sdk/client-sqs@3.1156.0", "", { "dependencies": { "@aws-sdk/core": "^3.978.5", "@aws-sdk/credential-provider-node": "^3.972.88", "@aws-sdk/middleware-sdk-sqs": "^3.972.46", "@aws-sdk/types": "^3.975.0", "@smithy/core": "^3.36.1", "@smithy/fetch-http-handler": "^5.8.0", "@smithy/node-http-handler": "^4.12.1", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-tkDeDv5kVb87RobSQ1RLfeCcLKA/IXwj0TkGWjUIfLSYQ+mL+hbimEZ/yOr46ahR+sJXRQN+JXffqrNQeiCLIw=="],
 

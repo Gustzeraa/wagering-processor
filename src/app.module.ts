@@ -11,6 +11,7 @@ import {
 } from './infrastructure/persistence/repositories';
 import { systemClock, uuidV7 } from './infrastructure/system';
 import { createSqsClient, SQS_CLIENT } from './infrastructure/sqs';
+import { createSnsClient, SNS_CLIENT } from './infrastructure/sns';
 import { pendingReferencePolicy } from './application/pending-reference-policy';
 import { ProcessWagerTransactionUseCase } from './application/process-wager-transaction';
 import { OpenWalletUseCase } from './application/open-wallet';
@@ -20,6 +21,7 @@ import { WageringController } from './http/wagering.controller';
 import { HealthController } from './http/health.controller';
 import { AuthGuard } from './http/auth.guard';
 import { WagerTransactionConsumer } from './messaging/wager-transaction.consumer';
+import { OutboxRelay } from './messaging/outbox-relay';
 
 const REPOSITORIES = [WalletRepository, WagerTransactionRepository, LedgerRepository, OutboxRepository];
 
@@ -29,9 +31,9 @@ const REPOSITORIES = [WalletRepository, WagerTransactionRepository, LedgerReposi
   providers: [
     ...REPOSITORIES,
     InboxRepository,
-    WagerTransactionConsumer,
     AuthGuard,
     { provide: SQS_CLIENT, useFactory: createSqsClient },
+    { provide: SNS_CLIENT, useFactory: createSnsClient },
     {
       provide: ProcessWagerTransactionUseCase,
       inject: REPOSITORIES,
@@ -49,6 +51,8 @@ const REPOSITORIES = [WalletRepository, WagerTransactionRepository, LedgerReposi
       inject: [EntityManager],
       useFactory: (em: EntityManager) => new ReconcileWalletUseCase(em),
     },
+    WagerTransactionConsumer,
+    OutboxRelay,
   ],
 })
 export class AppModule {}
