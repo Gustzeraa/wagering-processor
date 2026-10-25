@@ -10,6 +10,8 @@ import {
 } from '../infrastructure/persistence/repositories';
 import { inTransaction } from '../infrastructure/persistence/in-transaction';
 import { systemClock } from '../infrastructure/system';
+import { retries, wagerTransactions } from '../infrastructure/observability/metrics';
+import { runWithLogContext } from '../infrastructure/observability/log-context';
 import { evaluateReference } from '../domain/reference-policy';
 import { FailureCode } from '../domain/failure-code';
 import { WagerTransactionStatus as Status } from '../domain/wager-transaction';
@@ -77,53 +79,65 @@ export class PendingReferenceWorker implements OnApplicationBootstrap, OnApplica
 
   /** Uma pendente por transação, com a wallet travada. */
   private resolve(transactionId: string, walletId: string, now: Date): Promise<PendingOutcome> {
-    return inTransaction(this.em, async (tx) => {
-      await tx.execute(`SET LOCAL lock_timeout = '5s'`);
-      const wallet = await this.wallets.findByIdForUpdate(tx, walletId);
-      const t = await this.transactions.findById(tx, transactionId);
+    return runWithLogContext({ transactionId, walletId }, () =>
+      inTransaction(this.em, async (tx) => {
+        await tx.execute(`SET LOCAL lock_timeout = '5s'`);
+        const wallet = await this.wallets.findByIdForUpdate(tx, walletId);
+        const t = await this.transactions.findById(tx, transactionId);
 
-      // outra instância pode ter resolvido enquanto esperávamos o lock
-      if (!wallet || !t || t.status !== Status.PendingReference || !t.referenceExternalTransactionId) {
-        return 'skipped';
-      }
+        // outra instância pode ter resolvido enquanto esperávamos o lock
+        if (!wallet || !t || t.status !== Status.PendingReference || !t.referenceExternalTransactionId) {
+          return 'skipped';
+        }
 
-      const reference = await this.transactions.findByProviderExternalId(
-        tx, t.providerId, t.referenceExternalTransactionId,
-      );
-      const reversed = reference && t.requiresReference()
-        ? await this.transactions.hasProcessedReversal(tx, reference.id)
-        : false;
-      const decision = evaluateReference(t, reference, reversed);
+        const reference = await this.transactions.findByProviderExternalId(
+          tx,
+          t.providerId,
+          t.referenceExternalTransactionId,
+        );
+        const reversed =
+          reference && t.requiresReference()
+            ? await this.transactions.hasProcessedReversal(tx, reference.id)
+            : false;
+        const decision = evaluateReference(t, reference, reversed);
 
-      let entry: WalletLedgerEntry | undefined;
-      if (decision.outcome === 'wait') {
-        if (this.policy.isExpired(t.createdAt, now)) {
-          t.reject(FailureCode.ReferenceNotFound, wallet.balance);
+        let entry: WalletLedgerEntry | undefined;
+        if (decision.outcome === 'wait') {
+          if (this.policy.isExpired(t.createdAt, now)) {
+            t.reject(FailureCode.ReferenceNotFound, wallet.balance);
+          } else {
+            t.scheduleReferenceRetry(this.policy.nextAttempt(now, t.referenceAttempts + 1));
+            retries.inc({ component: 'pending_reference' });
+          }
+        } else if (decision.outcome === 'reject') {
+          t.reject(decision.code, wallet.balance);
         } else {
-          t.scheduleReferenceRetry(this.policy.nextAttempt(now, t.referenceAttempts + 1));
+          entry = this.processWager.apply(t, wallet, decision.reference, now);
         }
-      } else if (decision.outcome === 'reject') {
-        t.reject(decision.code, wallet.balance);
-      } else {
-        entry = this.processWager.apply(t, wallet, decision.reference, now);
-      }
 
-      await this.transactions.update(tx, t);
-      if (entry) {
-        this.ledger.add(tx, entry);
-        await this.wallets.update(tx, wallet);
-      }
-      if (t.isTerminal()) {
-        const ctx = { correlationId: t.idempotencyKey, causationId: 'pending-reference-worker' };
-        for (const event of this.processWager.eventsFor(t, wallet, entry, ctx)) {
-          this.outbox.add(tx, event);
+        await this.transactions.update(tx, t);
+        if (entry) {
+          this.ledger.add(tx, entry);
+          await this.wallets.update(tx, wallet);
         }
-      }
+        if (t.isTerminal()) {
+          wagerTransactions.inc({
+            source: 'pending_worker',
+            kind: t.kind,
+            status: t.status,
+            failure_code: t.failureCode ?? 'none',
+          });
+          const ctx = { correlationId: t.idempotencyKey, causationId: 'pending-reference-worker' };
+          for (const event of this.processWager.eventsFor(t, wallet, entry, ctx)) {
+            this.outbox.add(tx, event);
+          }
+        }
 
-      const finalStatus = t.status as Status;
-      if (finalStatus === Status.Processed) return 'processed';
-      if (finalStatus === Status.Rejected) return 'rejected';
-      return 'rescheduled';
-    });
+        const finalStatus = t.status as Status;
+        if (finalStatus === Status.Processed) return 'processed';
+        if (finalStatus === Status.Rejected) return 'rejected';
+        return 'rescheduled';
+      }),
+    );
   }
 }

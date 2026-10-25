@@ -17,6 +17,14 @@ import { inTransaction } from '../infrastructure/persistence/in-transaction';
 import { isTransientError } from '../infrastructure/transient-errors';
 import { SQS_CLIENT, WAGER_DLQ_NAME, WAGER_QUEUE_NAME } from '../infrastructure/sqs';
 import { systemClock } from '../infrastructure/system';
+import {
+  dlqMessages,
+  recordWagerError,
+  recordWagerResult,
+  retries,
+  wagerDuplicates,
+} from '../infrastructure/observability/metrics';
+import { addLogContext, runWithLogContext } from '../infrastructure/observability/log-context';
 import { DomainError } from '../domain/errors';
 import { InboxConflictError, InboxMessage } from '../domain/inbox-message';
 import { canonicalJson } from '../domain/payload-hash';
@@ -72,7 +80,9 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, OnAppli
     const queueUrl = await this.getQueueUrl();
     for (const receiptHandle of this.inFlight.keys()) {
       await this.sqs
-        .send(new ChangeMessageVisibilityCommand({ QueueUrl: queueUrl, ReceiptHandle: receiptHandle, VisibilityTimeout: 0 }))
+        .send(
+          new ChangeMessageVisibilityCommand({ QueueUrl: queueUrl, ReceiptHandle: receiptHandle, VisibilityTimeout: 0 }),
+        )
         .catch(() => undefined);
     }
     await this.loop?.catch(() => undefined);
@@ -112,47 +122,64 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, OnAppli
   }
 
   /** Processa, e só confirma (apaga da fila) depois do commit. */
-  async handle(message: Message): Promise<HandleOutcome> {
-    try {
-      const outcome = await this.processMessage(message.Body ?? '');
+  handle(message: Message): Promise<HandleOutcome> {
+    return runWithLogContext({ messageId: message.MessageId }, async () => {
+      try {
+        const outcome = await this.processMessage(message.Body ?? '');
 
-      // injeção de falha para o teste "worker morto depois do commit e antes do ack"
-      if (process.env.CRASH_AFTER_COMMIT === 'true') process.exit(1);
+        // injeção de falha para o teste "worker morto depois do commit e antes do ack"
+        if (process.env.CRASH_AFTER_COMMIT === 'true') process.exit(1);
 
-      await this.sqs.send(
-        new DeleteMessageCommand({ QueueUrl: await this.getQueueUrl(), ReceiptHandle: message.ReceiptHandle }),
-      );
-      return outcome;
-    } catch (error) {
-      if (this.isPermanent(error)) {
-        await this.deadLetter(message, error);
-        return 'dead-lettered';
+        await this.sqs.send(
+          new DeleteMessageCommand({ QueueUrl: await this.getQueueUrl(), ReceiptHandle: message.ReceiptHandle }),
+        );
+        return outcome;
+      } catch (error) {
+        recordWagerError(error);
+        if (this.isPermanent(error)) {
+          await this.deadLetter(message, error);
+          return 'dead-lettered';
+        }
+        await this.retryLater(message, error);
+        return 'retry';
       }
-      await this.retryLater(message, error);
-      return 'retry';
-    }
+    });
   }
 
   /** Inbox + caso de uso na mesma transação. Lança erro em qualquer falha. */
   async processMessage(body: string): Promise<ProcessOutcome> {
     const envelope: Envelope = parseBody(envelopeSchema, JSON.parse(body));
-    const now = systemClock.now();
+    addLogContext({
+      messageId: envelope.messageId,
+      correlationId: envelope.messageId,
+      walletId: envelope.data.walletId,
+      providerId: envelope.data.providerId,
+    });
+
+    const started = performance.now();
     const inboxMessage = InboxMessage.receive({
       messageId: envelope.messageId,
       consumerName: WagerTransactionConsumer.CONSUMER_NAME,
       payloadHash: createHash('sha256').update(canonicalJson(envelope.data)).digest('hex'),
-      receivedAt: now,
+      receivedAt: systemClock.now(),
     });
 
     return inTransaction(this.em, async (tx) => {
       const receipt = await this.inbox.tryReceive(tx, inboxMessage);
-      if (receipt === 'duplicate') return 'duplicate';
-      if (receipt === 'conflict') throw new InboxConflictError(envelope.messageId);
+      if (receipt === 'duplicate') {
+        wagerDuplicates.inc({ source: 'inbox', outcome: 'replay' });
+        return 'duplicate';
+      }
+      if (receipt === 'conflict') {
+        wagerDuplicates.inc({ source: 'inbox', outcome: 'conflict' });
+        throw new InboxConflictError(envelope.messageId);
+      }
 
-      await this.processWager.execute(envelope.data, tx, {
+      const result = await this.processWager.execute(envelope.data, tx, {
         correlationId: envelope.messageId,
         causationId: envelope.messageId,
       });
+      recordWagerResult('sqs', result.transaction, result.replay, (performance.now() - started) / 1000);
 
       inboxMessage.markProcessed(systemClock.now());
       await this.inbox.markProcessed(tx, inboxMessage);
@@ -167,11 +194,11 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, OnAppli
   }
 
   private async retryLater(message: Message, error: unknown): Promise<void> {
+    retries.inc({ component: 'consumer' });
     const receiveCount = Number(message.Attributes?.ApproximateReceiveCount ?? 1);
     const delaySeconds = Math.min(2 ** receiveCount, 300);
     this.logger.warn({
       msg: 'transient failure, retrying later',
-      messageId: message.MessageId,
       receiveCount,
       delaySeconds,
       error: String(error),
@@ -190,7 +217,8 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, OnAppli
   private async deadLetter(message: Message, error: unknown): Promise<void> {
     const reason =
       error instanceof DomainError || error instanceof RequestValidationError ? error.code : 'INVALID_MESSAGE';
-    this.logger.error({ msg: 'permanent failure, sending to DLQ', messageId: message.MessageId, reason });
+    dlqMessages.inc({ reason });
+    this.logger.error({ msg: 'permanent failure, sending to DLQ', reason });
     await this.sqs.send(
       new SendMessageCommand({
         QueueUrl: await this.getDlqUrl(),

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { EntityManager } from '@mikro-orm/postgresql';
 import config from './mikro-orm.config';
@@ -12,6 +12,8 @@ import {
 import { systemClock, uuidV7 } from './infrastructure/system';
 import { createSqsClient, SQS_CLIENT } from './infrastructure/sqs';
 import { createSnsClient, SNS_CLIENT } from './infrastructure/sns';
+import { MetricsCollector } from './infrastructure/observability/metrics.collector';
+import { reconciliationMismatches } from './infrastructure/observability/metrics';
 import { pendingReferencePolicy } from './application/pending-reference-policy';
 import { ProcessWagerTransactionUseCase } from './application/process-wager-transaction';
 import { OpenWalletUseCase } from './application/open-wallet';
@@ -19,6 +21,8 @@ import { ReconcileWalletUseCase } from './application/reconcile-wallet';
 import { WalletsController } from './http/wallets.controller';
 import { WageringController } from './http/wagering.controller';
 import { HealthController } from './http/health.controller';
+import { MetricsController } from './http/metrics.controller';
+import { CorrelationMiddleware } from './http/correlation.middleware';
 import { AuthGuard } from './http/auth.guard';
 import { WagerTransactionConsumer } from './messaging/wager-transaction.consumer';
 import { OutboxRelay } from './messaging/outbox-relay';
@@ -28,11 +32,12 @@ const REPOSITORIES = [WalletRepository, WagerTransactionRepository, LedgerReposi
 
 @Module({
   imports: [MikroOrmModule.forRoot(config)],
-  controllers: [WalletsController, WageringController, HealthController],
+  controllers: [WalletsController, WageringController, HealthController, MetricsController],
   providers: [
     ...REPOSITORIES,
     InboxRepository,
     AuthGuard,
+    MetricsCollector,
     { provide: SQS_CLIENT, useFactory: createSqsClient },
     { provide: SNS_CLIENT, useFactory: createSnsClient },
     {
@@ -50,11 +55,15 @@ const REPOSITORIES = [WalletRepository, WagerTransactionRepository, LedgerReposi
     {
       provide: ReconcileWalletUseCase,
       inject: [EntityManager],
-      useFactory: (em: EntityManager) => new ReconcileWalletUseCase(em),
+      useFactory: (em: EntityManager) => new ReconcileWalletUseCase(em, () => reconciliationMismatches.inc()),
     },
     WagerTransactionConsumer,
     OutboxRelay,
     PendingReferenceWorker,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(CorrelationMiddleware).forRoutes(WalletsController, WageringController);
+  }
+}

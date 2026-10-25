@@ -162,4 +162,21 @@ describe('HTTP API', () => {
     expect(ready.status).toBe(200);
     expect(ready.body.checks).toEqual({ postgres: 'up', sqs: 'up' });
   });
+
+    it('exposes Prometheus metrics', async () => {
+    const res = await fetch(`${baseUrl}/metrics`);
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    for (const name of [
+      'wager_transactions_total',
+      'wager_duplicates_total',
+      'wager_retries_total',
+      'wager_dlq_messages_total',
+      'wallet_lock_wait_seconds',
+      'outbox_lag_seconds',
+      'wager_processing_duration_seconds',
+    ]) {
+      expect(text).toContain(name);
+    }
+  });
 });

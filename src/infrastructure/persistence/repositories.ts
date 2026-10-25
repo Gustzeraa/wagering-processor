@@ -6,7 +6,15 @@ import {
   WagerTransactionKind,
   WagerTransactionStatus,
 } from '../../domain/wager-transaction';
-import { LedgerEntryRecord, WagerTransactionRecord, WalletRecord } from './records';
+import type { IntegrationEvent } from '../../domain/events';
+import { OutboxMessage } from '../../domain/outbox-message';
+import type { InboxMessage } from '../../domain/inbox-message';
+import {
+  LedgerEntryRecord,
+  OutboxMessageRecord,
+  WagerTransactionRecord,
+  WalletRecord,
+} from './records';
 import {
   applyTransaction,
   applyWallet,
@@ -17,16 +25,18 @@ import {
   transactionToRecord,
   walletToRecord,
 } from './mappers';
-import { OutboxMessageRecord } from './records';
-import type { IntegrationEvent } from '../../domain/events';
-import type { InboxMessage } from '../../domain/inbox-message';
-import { OutboxMessage } from '../../domain/outbox-message';
+import { lockWait } from '../observability/metrics';
 
 export class WalletRepository {
   /** SELECT ... FOR UPDATE: trava a wallet até o fim da transação. */
   async findByIdForUpdate(tx: EntityManager, id: string): Promise<Wallet | null> {
-    const r = await tx.findOne(WalletRecord, { id }, { lockMode: LockMode.PESSIMISTIC_WRITE });
-    return r ? toWallet(r) : null;
+    const stop = lockWait.startTimer();
+    try {
+      const r = await tx.findOne(WalletRecord, { id }, { lockMode: LockMode.PESSIMISTIC_WRITE });
+      return r ? toWallet(r) : null;
+    } finally {
+      stop();
+    }
   }
 
   async findById(tx: EntityManager, id: string): Promise<Wallet | null> {
@@ -94,16 +104,15 @@ export class LedgerRepository {
     return rows.map(toLedgerEntry);
   }
 
-    /** Página do mais recente para o mais antigo; pede limit + 1 para saber se há próxima. */
+  /** Página do mais recente para o mais antigo; pede limit + 1 para saber se há próxima. */
   async page(
     em: EntityManager,
     walletId: string,
     beforeVersion: number | undefined,
     limit: number,
   ): Promise<WalletLedgerEntry[]> {
-    const where = beforeVersion !== undefined
-      ? { walletId, walletVersion: { $lt: beforeVersion } }
-      : { walletId };
+    const where =
+      beforeVersion !== undefined ? { walletId, walletVersion: { $lt: beforeVersion } } : { walletId };
     const rows = await em.find(LedgerEntryRecord, where, {
       orderBy: { walletVersion: 'desc' },
       limit: limit + 1,
@@ -144,10 +153,10 @@ export class InboxRepository {
     );
     if (inserted.length > 0) return 'new';
 
-    const [existing] = await tx.execute(
+    const [existing] = (await tx.execute(
       `SELECT payload_hash FROM inbox_message WHERE consumer_name = ? AND message_id = ?`,
       [message.consumerName, message.messageId],
-    );
+    )) as unknown as { payload_hash: string }[];
     return existing?.payload_hash === message.payloadHash ? 'duplicate' : 'conflict';
   }
 
@@ -158,4 +167,3 @@ export class InboxRepository {
     );
   }
 }
-

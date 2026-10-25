@@ -33,6 +33,7 @@ import type {
   WagerTransactionRepository,
   WalletRepository,
 } from '../infrastructure/persistence/repositories';
+import { addLogContext } from '../infrastructure/observability/log-context';
 
 export interface ProcessWagerCommand {
   providerId: string;
@@ -82,11 +83,14 @@ export class ProcessWagerTransactionUseCase {
       throw new WalletNotFoundError(cmd.walletId);
     }
 
+    addLogContext({ walletId: cmd.walletId, providerId: cmd.providerId });
+
     // 2. idempotência: com a wallet travada, uma cópia concorrente já terá sido gravada
     const existing =
       (await this.transactions.findByIdempotencyKey(tx, cmd.idempotencyKey)) ??
       (await this.transactions.findByProviderExternalId(tx, cmd.providerId, cmd.externalTransactionId));
     if (existing) {
+      addLogContext({ transactionId: existing.id });
       if (existing.idempotencyKey === cmd.idempotencyKey && existing.matchesPayload(payloadHash)) {
         return { transaction: existing, replay: true };
       }
@@ -110,6 +114,7 @@ export class ProcessWagerTransactionUseCase {
       referenceExternalTransactionId: cmd.referenceExternalTransactionId,
       createdAt: now,
     });
+    addLogContext({ transactionId: transaction.id });
 
     const entry = await this.decide(tx, transaction, wallet, now);
 
@@ -144,11 +149,12 @@ export class ProcessWagerTransactionUseCase {
     let reference: WagerTransaction | undefined;
     if (t.referenceExternalTransactionId !== undefined) {
       const found = await this.transactions.findByProviderExternalId(
-        tx, t.providerId, t.referenceExternalTransactionId,
+        tx,
+        t.providerId,
+        t.referenceExternalTransactionId,
       );
-      const reversed = found && t.requiresReference()
-        ? await this.transactions.hasProcessedReversal(tx, found.id)
-        : false;
+      const reversed =
+        found && t.requiresReference() ? await this.transactions.hasProcessedReversal(tx, found.id) : false;
       const decision = evaluateReference(t, found, reversed);
 
       if (decision.outcome === 'wait') {

@@ -4,6 +4,7 @@ import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { OutboxMessage } from '../domain/outbox-message';
 import { SNS_CLIENT, WALLET_EVENTS_TOPIC_ARN } from '../infrastructure/sns';
 import { systemClock } from '../infrastructure/system';
+import { retries } from '../infrastructure/observability/metrics';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -58,7 +59,7 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
    */
   async publishBatch(limit = 20): Promise<string[]> {
     return this.em.fork().transactional(async (tx) => {
-      const rows: OutboxRow[] = await tx.execute(
+      const rows = (await tx.execute(
         `SELECT id, aggregate_id, event_type, payload, occurred_at, attempts, next_attempt_at
          FROM outbox_message
          WHERE published_at IS NULL AND (next_attempt_at IS NULL OR next_attempt_at <= now())
@@ -66,7 +67,7 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
          LIMIT ?
          FOR UPDATE SKIP LOCKED`,
         [limit],
-      );
+      )) as unknown as OutboxRow[];
 
       const published: string[] = [];
       for (const row of rows) {
@@ -93,7 +94,13 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
           published.push(message.id);
         } catch (error) {
           message.scheduleRetry(now);
-          this.logger.warn({ msg: 'publish failed, will retry', eventId: message.id, attempts: message.attempts, error: String(error) });
+          retries.inc({ component: 'outbox' });
+          this.logger.warn({
+            msg: 'publish failed, will retry',
+            eventId: message.id,
+            attempts: message.attempts,
+            error: String(error),
+          });
         }
 
         await tx.execute(

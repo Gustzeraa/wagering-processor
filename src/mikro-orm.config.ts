@@ -13,5 +13,5 @@ export default defineConfig({
   metadataProvider: ReflectMetadataProvider,
   extensions: [Migrator],
   migrations: { path: 'src/migrations', snapshot: false },
-  debug: true,
+  debug: process.env.DB_DEBUG === 'true',
 });
