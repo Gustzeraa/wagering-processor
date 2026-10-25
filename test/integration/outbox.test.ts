@@ -43,20 +43,35 @@ afterAll(async () => {
 async function processBets(count: number): Promise<string[]> {
   const playerId = `player-${crypto.randomUUID()}`;
   const wallet = await inTransaction(em, (tx) =>
-    app.get(OpenWalletUseCase).execute({ playerId, initialBalance: { amount: '1000.00', currency: 'BRL' } }, tx, { correlationId: 't' }),
+    app.get(OpenWalletUseCase).execute(
+      { playerId, initialBalance: { amount: '1000.00', currency: 'BRL' } },
+      tx,
+      { correlationId: 't' },
+    ),
   );
   for (let i = 0; i < count; i++) {
     const ext = crypto.randomUUID();
     await inTransaction(em, (tx) =>
-      app.get(ProcessWagerTransactionUseCase).execute({
-        providerId: 'provider-a', externalTransactionId: ext, idempotencyKey: `provider-a:${ext}`,
-        playerId, walletId: wallet.id, roundId: 'r', gameId: 'g', kind: 'BET',
-        money: { amount: '1.00', currency: 'BRL' },
-      }, tx, { correlationId: 't' }),
+      app.get(ProcessWagerTransactionUseCase).execute(
+        {
+          providerId: 'provider-a',
+          externalTransactionId: ext,
+          idempotencyKey: `provider-a:${ext}`,
+          playerId,
+          walletId: wallet.id,
+          roundId: 'r',
+          gameId: 'g',
+          kind: 'BET',
+          money: { amount: '1.00', currency: 'BRL' },
+        },
+        tx,
+        { correlationId: 't' },
+      ),
     );
   }
-    const rows = (await em.getConnection().execute(
-    `SELECT id FROM outbox_message WHERE aggregate_id = ? AND published_at IS NULL`, [wallet.id],
+  const rows = (await em.getConnection().execute(
+    `SELECT id FROM outbox_message WHERE aggregate_id = ? AND published_at IS NULL`,
+    [wallet.id],
   )) as unknown as { id: string }[];
   return rows.map((r) => r.id);
 }
@@ -69,19 +84,31 @@ async function receivedEventIds(): Promise<string[]> {
     );
     if (Messages.length === 0) break;
     for (const m of Messages) ids.push(JSON.parse(m.Body ?? '{}').eventId);
-    await sqs.send(new DeleteMessageBatchCommand({
-      QueueUrl: auditUrl,
-      Entries: Messages.map((m, n) => ({ Id: String(n), ReceiptHandle: m.ReceiptHandle })),
-    }));
+    await sqs.send(
+      new DeleteMessageBatchCommand({
+        QueueUrl: auditUrl,
+        Entries: Messages.map((m, n) => ({ Id: String(n), ReceiptHandle: m.ReceiptHandle })),
+      }),
+    );
   }
   return ids;
 }
 
 async function unpublished(ids: string[]): Promise<number> {
   const [row] = (await em.getConnection().execute(
-    `SELECT COUNT(*)::int AS n FROM outbox_message WHERE id IN (?) AND published_at IS NULL`, [ids],
+    `SELECT COUNT(*)::int AS n FROM outbox_message WHERE id IN (?) AND published_at IS NULL`,
+    [ids],
   )) as unknown as { n: number }[];
   return row?.n ?? 0;
+}
+
+/** Publica até não sobrar nenhum dos ids, esperando os retries vencerem. */
+async function publishUntilDone(ids: string[], timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while ((await unpublished(ids)) > 0 && Date.now() < deadline) {
+    const published = await relay.publishBatch(50);
+    if (published.length === 0) await Bun.sleep(500);
+  }
 }
 
 describe('transactional outbox', () => {
@@ -89,7 +116,7 @@ describe('transactional outbox', () => {
     const ids = await processBets(1); // abertura (2 eventos) + BET (2 eventos)
     expect(ids).toHaveLength(4);
 
-    await relay.publishBatch();
+    await publishUntilDone(ids);
 
     expect(await unpublished(ids)).toBe(0);
     const received = await receivedEventIds();
@@ -104,32 +131,35 @@ describe('transactional outbox', () => {
     const lockedGate = new Promise<void>((resolve) => (locked = resolve));
 
     // instância A: trava as linhas e "morre" antes de publicar
-    const instanceA = em.fork().transactional(async (tx) => {
-      await tx.execute(`SELECT id FROM outbox_message WHERE id IN (?) FOR UPDATE`, [ids]);
-      locked();
-      await crashGate;
-      throw new Error('simulated crash');
-    }).catch(() => undefined);
+    const instanceA = em
+      .fork()
+      .transactional(async (tx) => {
+        await tx.execute(`SELECT id FROM outbox_message WHERE id IN (?) FOR UPDATE`, [ids]);
+        locked();
+        await crashGate;
+        throw new Error('simulated crash');
+      })
+      .catch(() => undefined);
 
     await lockedGate;
     // instância B, enquanto A segura o lock: pula as linhas travadas
     const whileLocked = await relay.publishBatch();
     expect(whileLocked.filter((id) => ids.includes(id))).toHaveLength(0);
+    expect(await unpublished(ids)).toBe(ids.length);
 
     releaseCrash();
     await instanceA; // rollback: locks liberados, nada foi marcado
 
     // instância B assume e publica
-    await relay.publishBatch();
+    await publishUntilDone(ids);
     expect(await unpublished(ids)).toBe(0);
   });
 
   it('two concurrent publishers never skip an event', async () => {
     const ids = await processBets(10); // 22 eventos
-    await sqs.send(new PurgeQueueCommand({ QueueUrl: auditUrl }));
 
     const [a, b] = await Promise.all([relay.publishBatch(15), relay.publishBatch(15)]);
-    while ((await relay.publishBatch()).length > 0) {}
+    await publishUntilDone(ids);
 
     expect(await unpublished(ids)).toBe(0);
     // SKIP LOCKED: os dois publishers pegaram lotes disjuntos

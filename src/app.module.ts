@@ -22,6 +22,7 @@ import { HealthController } from './http/health.controller';
 import { AuthGuard } from './http/auth.guard';
 import { WagerTransactionConsumer } from './messaging/wager-transaction.consumer';
 import { OutboxRelay } from './messaging/outbox-relay';
+import { PendingReferenceWorker } from './messaging/pending-reference.worker';
 
 const REPOSITORIES = [WalletRepository, WagerTransactionRepository, LedgerRepository, OutboxRepository];
 
@@ -53,6 +54,7 @@ const REPOSITORIES = [WalletRepository, WagerTransactionRepository, LedgerReposi
     },
     WagerTransactionConsumer,
     OutboxRelay,
+    PendingReferenceWorker,
   ],
 })
 export class AppModule {}
