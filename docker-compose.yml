@@ -1,3 +1,15 @@
+x-app-env: &app-env
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_USER: wagering
+  DB_PASSWORD: wagering
+  DB_NAME: wagering
+  AWS_ENDPOINT: http://localstack:4566
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  PORT: "3000"
+
 services:
   postgres:
     image: postgres:17
@@ -28,6 +40,37 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  migrate:
+    profiles: ["app"]
+    build: .
+    command: ["bun", "src/migrate.ts", "up"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    profiles: ["app"]
+    build: .
+    environment: *app-env
+    deploy:
+      replicas: 3
+    ports:
+      - "3101-3103:3000"
+    stop_grace_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pgdata:
